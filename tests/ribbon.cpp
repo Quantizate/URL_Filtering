@@ -7,11 +7,13 @@
 #include <vector>
 #include "filterapi.h"
 
-#define FILTER_SIZE 500000
-#define DATA_SIZE 1000000
-#define TEST_SIZE 500000
-#define BOGUS_SIZE 1000000
-#define QUERY_SIZE (DATA_SIZE - TEST_SIZE)
+// #define FILTER_SIZE 500000
+// #define DATA_SIZE 1000000
+// #define TEST_SIZE 500000
+// #define BOGUS_SIZE 1000000
+// #define QUERY_SIZE (DATA_SIZE - TEST_SIZE)
+
+int data_size = 0, test_size, bogus_size = 1000000, query_size, filter_size;
 
 std::string random_string()
 {
@@ -28,23 +30,37 @@ std::string random_string()
   return str;
 }
 
-void pretty_print(size_t volume, size_t bytes, std::string name,
-                  event_aggregate agg)
+int convert(char *str)
 {
-  printf("%-30s : ", name.c_str());
-  printf(" %5.2f GB/s ", bytes / agg.fastest_elapsed_ns());
-  printf(" %5.1f Ma/s ", volume * 1000.0 / agg.fastest_elapsed_ns());
-  printf(" %5.2f ns/d ", agg.fastest_elapsed_ns() / volume);
-  if (collector.has_events())
-  {
-    printf(" %5.2f GHz ", agg.fastest_cycles() / agg.fastest_elapsed_ns());
-    printf(" %5.2f c/d ", agg.fastest_cycles() / volume);
-    printf(" %5.2f i/d ", agg.fastest_instructions() / volume);
-    printf(" %5.1f c/b ", agg.fastest_cycles() / bytes);
-    printf(" %5.2f i/b ", agg.fastest_instructions() / bytes);
-    printf(" %5.2f i/c ", agg.fastest_instructions() / agg.fastest_cycles());
-  }
-  printf("\n");
+  int num = 0;
+
+  for (int i = 0; str[i] != '\0'; i++)
+    num = num * 10 + str[i] - '0';
+  return num;
+}
+
+void pretty_print(size_t volume, size_t bytes, // std::string name,
+                  event_aggregate agg, FILE *filename)
+{
+  fprintf(filename, ",%.2f,%.2f,%.2f", bytes / agg.fastest_elapsed_ns(), volume * 1000.0 / agg.fastest_elapsed_ns(), agg.fastest_elapsed_ns() / volume);
+}
+
+// data size, test size, true positive, true negative, false positive, false negative, bogus size, false_pos_bogus, duplicates data
+void writeOutput(size_t tp, size_t tn, size_t fp, size_t fn, size_t fp_bogus, int dup_num, FILE *filename)
+{
+  fprintf(filename, "%d,%d,%zu,%zu,%zu,%zu,%d,%zu,%d\n", data_size, test_size, tp, tn, fp, fn, bogus_size, fp_bogus, dup_num);
+}
+
+// data_size, test_size, total_data_volume, average_len (bytes/name), test_volume, filter_volume, %usage(wrt to test_volume), usuage (wrt to test_size[bits / entry])
+void writeStat1(size_t input_volume, size_t test_volume, size_t filter_volume, FILE *filename)
+{
+  fprintf(filename, "%d,%d,%zu,%.1f,%zu,%zu,%.2f %%,%.1f\n", data_size, test_size, input_volume, double(input_volume) / data_size, test_volume, filter_volume, 100.0 * filter_volume / test_volume, 8.0 * filter_volume / test_size);
+}
+
+// data_size, test_size, Benchmarking queries[time/entry, GB/s, Ma/s, ns/d], Benchmarking construction[time/entry, GB/s, Ma/s, ns/d]
+void writeStat2(FILE *filename)
+{
+  fprintf(filename, "%d,%d", data_size, test_size);
 }
 
 uint64_t simple_hash(const std::string &line)
@@ -61,7 +77,8 @@ uint64_t simple_hash(const std::string &line)
 int main(int argc, char **argv)
 {
   std::vector<std::string> inputs;
-  std::vector<std::pair<bool, bool>> dataValidity(DATA_SIZE, {false, false}); // original, modified
+
+  size_t volume = 0;
 
   if (argc == 1)
   {
@@ -77,7 +94,6 @@ int main(int argc, char **argv)
       std::cerr << "Could not open " << argv[1] << std::endl;
       exit(EXIT_FAILURE);
     }
-    size_t volume = 0;
     for (std::string line; std::getline(input, line);)
     {
       std::string ref = line;
@@ -88,60 +104,86 @@ int main(int argc, char **argv)
                 ref.end());
       volume += ref.size();
       inputs.push_back(ref);
+      data_size++;
     }
-    std::cout << "loaded " << inputs.size() << " names" << std::endl;
-    std::cout << "average length " << double(volume) / inputs.size()
-              << " bytes/name" << std::endl;
+    // std::cout << "loaded " << inputs.size() << " names" << std::endl;
+    // std::cout << "average length " << double(volume) / inputs.size()
+    //           << " bytes/name" << std::endl;
   }
-  printf("\n");
-  /* We are going to check for duplicates. If you have too many duplicates, something might be wrong. */
+  // printf("\n");
 
+  FILE *data_reliability = fopen(argv[3], "a");
+  FILE *stat1 = fopen(argv[4], "a");
+  FILE *stat2 = fopen(argv[5], "a");
+
+  test_size = filter_size = convert(argv[2]);
+  query_size = data_size - test_size;
+
+  bool is_ok;
+  size_t fp_bogus = 0;
+  size_t filter_volume = 0;
+  size_t falsePositive = 0, falseNegative = 0, truePositive = 0, trueNegative = 0;
+
+  std::vector<std::pair<bool, bool>> dataValidity(data_size, {false, false}); // original, modified
+
+  /* We are going to check for duplicates. If you have too many duplicates, something might be wrong. */
+  int dup_num = 0;
   std::sort(inputs.begin(), inputs.end());
   auto dup_str = std::adjacent_find(inputs.begin(), inputs.end());
   while (dup_str != inputs.end())
   {
-    std::cout << "duplicated string " << *dup_str << std::endl;
+    // std::cout << "duplicated string " << *dup_str << std::endl;
     dup_str = std::adjacent_find(dup_str + 1, inputs.end());
+    dup_num++;
   }
   size_t bytes = 0;
-  for (int i = 0; i < TEST_SIZE; i++)
+  for (int i = 0; i < test_size; i++)
   {
     bytes += inputs[i].size();
   }
-  printf("total volume %zu bytes\n", bytes);
+  // printf("total volume %zu bytes\n", bytes);
+
   /* We are going to test our hash function to make sure that it is sane. */
 
   // hashes is *temporary* and does not count in the memory budget
-  std::vector<uint64_t> test_hashes(TEST_SIZE), hashes(DATA_SIZE), bogus_hashes(BOGUS_SIZE);
-  for (size_t i = 0; i < DATA_SIZE; i++)
+  std::vector<uint64_t> test_hashes(test_size), hashes(data_size), bogus_hashes(bogus_size);
+  for (size_t i = 0; i < (size_t)data_size; i++)
   {
     hashes[i] = simple_hash(inputs[i]);
-    if (i < TEST_SIZE)
+    if (i < (size_t)test_size)
     {
       test_hashes[i] = hashes[i];
       dataValidity[i].first = true;
     }
   }
-  std::sort(test_hashes.begin(), test_hashes.end());
-  auto dup = std::adjacent_find(test_hashes.begin(), test_hashes.end());
-  size_t count = 0;
-  while (dup != test_hashes.end())
-  {
-    count++;
-    dup = std::adjacent_find(dup + 1, test_hashes.end());
-  }
-  printf("number of duplicates hashes %zu\n", count);
-  printf("ratio of duplicates  hashes %f\n", count / double(test_hashes.size()));
+
+  // DONT CHECK THIS CAUTION CUZ THIS WILL SORT AND FURTHER MESS UP VALUES
+  // std::sort(hashes.begin(), hashes.end());
+  // auto dup = std::adjacent_find(hashes.begin(), hashes.end());
+  // size_t dup_hashes = 0;
+  // while (dup != hashes.end())
+  // {
+  //   dup_hashes++;
+  //   dup = std::adjacent_find(dup + 1, hashes.end());
+  // }
+  // printf("number of duplicates hashes %zu\n", count);
+  // printf("ratio of duplicates  hashes %f\n", count / double(test_hashes.size()));
 
   size_t size = test_hashes.size();
 
-  printf("\n");
-  printf("Test size(added to filter): %d \n", TEST_SIZE);
-  printf("Query size(not added to filter): %d \n", QUERY_SIZE);
-  printf("Bogus size(randomly generated strings): %d \n", BOGUS_SIZE);
-  printf("\n");
+  std::vector<std::string> query_set_bogus;
 
-  printf("-------------- HomogRibbon64_5 --------------\n");
+  for (size_t i = 0; i < bogus_size; i++)
+  {
+    query_set_bogus.push_back(random_string());
+  }
+
+  for (int i = 0; i < bogus_size; i++)
+  {
+    bogus_hashes[i] = simple_hash(query_set_bogus[i]);
+  }
+
+  // printf("-------------- HomogRibbon64_5 --------------\n");
   /*******************************
    * Let us benchmark the filter!
    ******************************/
@@ -149,106 +191,107 @@ int main(int argc, char **argv)
    * A filter is a simple data structure that can be easily serialized (e.g., to disk).
    * https://github.com/FastFilter/xor_singleheader#persistent-usage
    */
-  HomogRibbonFilter<uint64_t, 5> hr5(TEST_SIZE), test_filter(FILTER_SIZE);
-
-  // Construction
-  hr5.AddAll(test_hashes, 0, TEST_SIZE);
-
-  // Let us check the size of the filter in bytes:
-  size_t filter_volume = hr5.SizeInBytes();
-  printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
-         100.0 * filter_volume / bytes);
-  printf("\nfilter memory usage : %1.f bits/entry\n",
-         8.0 * filter_volume / test_hashes.size());
-  printf("\n");
-
-  // Let us test the query with bogus strings
-  std::vector<std::string> query_set_bogus;
-  size_t bogus_volume = 0;
-  for (size_t i = 0; i < BOGUS_SIZE; i++)
-  {
-    query_set_bogus.push_back(random_string());
-  }
-
-  size_t fpp = 0;
-  for (int i = 0; i < BOGUS_SIZE; i++)
-  {
-    bogus_volume += query_set_bogus[i].size();
-    bogus_hashes[i] = simple_hash(query_set_bogus[i]);
-    bool in_set = hr5.Contain(bogus_hashes[i]);
-    if (in_set)
-    {
-      fpp++;
-    }
-  }
-
-  printf("Bogus false-positives: %zu\n", fpp);
-  printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
-
-  // volatile size_t basic_count = 0;
-  // printf("Benchmarking queries:\n");
-
-  // pretty_print(query_set_bogus.size(), bogus_volume, "binary_fuse16_contain",
-  //              bench([&query_set_bogus, &filter, &basic_count]() {
-  //                for (std::string &ref : query_set_bogus) {
-  //                  basic_count +=
-  //                      binary_fuse16_contain(simple_hash(ref), &filter);
-  //                }
-  //              }));
-  // printf("Benchmarking construction speed\n");
-
-  pretty_print(inputs.size(), bytes, "binary_fuse16_populate",
-               bench([&test_hashes, &test_filter, &size]()
-                     { test_filter.AddAll(test_hashes, 0, size); }));
-
-  // Testing
-  for (int i = 0; i < DATA_SIZE; i++)
-  {
-    dataValidity[i].second = hr5.Contain(hashes[i]);
-  }
-
-  size_t falsePositive = 0;
-  size_t falseNegative = 0;
-  size_t truePositive = 0;
-  size_t trueNegative = 0;
-
-  for (int i = 0; i < DATA_SIZE; i++)
-  {
-    if (dataValidity[i].first == true && dataValidity[i].second == true)
-    {
-      truePositive++;
-    }
-    else if (dataValidity[i].first == true && dataValidity[i].second == false)
-    {
-      falseNegative++;
-    }
-    else if (dataValidity[i].first == false && dataValidity[i].second == true)
-    {
-      falsePositive++;
-    }
-    else if (dataValidity[i].first == false && dataValidity[i].second == false)
-    {
-      trueNegative++;
-    }
-  }
-
-  printf("\n");
-  printf("Tested with total data set (test + query): %d \n", DATA_SIZE);
-  printf("True Positive: %zu", truePositive);
-  printf("\t");
-  printf("True Negative: %zu", trueNegative);
-  printf("\n");
-  printf("False Positive: %zu", falsePositive);
-  printf("\t");
-  printf("False Negative: %zu", falseNegative);
-  printf("\n");
-  printf("\n");
-
-  // printf("-------------- HomogRibbon64_7 --------------\n");
-  // HomogRibbonFilter<uint64_t, 7> hr7(TEST_SIZE);
+  // HomogRibbonFilter<uint64_t, 5> hr5(data_size), hr5_test(data_size);
 
   // // Construction
-  // hr7.AddAll(test_hashes, 0, TEST_SIZE);
+  // hr5.AddAll(test_hashes, 0, test_size);
+
+  // // Let us check the size of the filter in bytes:
+  // filter_volume = hr5.SizeInBytes();
+  // // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
+  // //        100.0 * filter_volume / bytes);
+  // // printf("\nfilter memory usage : %1.f bits/entry\n",
+  // //        8.0 * filter_volume / test_hashes.size());
+  // // printf("\n");
+
+  // // Let us test the query with bogus strings
+  // fp_bogus = 0;
+  // for (int i = 0; i < bogus_size; i++)
+  // {
+  //   bool in_set = 1 - hr5.Contain(bogus_hashes[i]);
+  //   if (in_set)
+  //   {
+  //     fp_bogus++;
+  //   }
+  // }
+
+  // // printf("Bogus false-positives: %zu\n", fpp);
+  // // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+
+  // // printf("Benchmarking queries:\n");
+  // writeStat2(stat2);
+
+  // // printf("Benchmarking queries:\n");
+
+  // pretty_print(inputs.size(), bytes,
+  //              bench([&hashes, &hr5, &dataValidity]()
+  //                    {
+  //                for (int i = 0; i < hashes.size(); i++)
+  //                {
+  //                  dataValidity[i].second = hr5.Contain(hashes[i]);
+  //                } }),
+  //              stat2);
+
+  // // printf("Benchmarking construction speed\n");
+  // pretty_print(test_hashes.size(), bytes,
+  //              bench([&test_hashes, &hr5_test, &size]()
+  //                    { hr5_test.AddAll(test_hashes, 0, size); }),
+  //              stat2);
+
+  // fprintf(stat2, "\n");
+
+  // writeStat1(volume, bytes, filter_volume, stat1);
+
+  // // Testing
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   dataValidity[i].second = 1 - hr5.Contain(hashes[i]);
+  // }
+
+  // falsePositive = 0;
+  // falseNegative = 0;
+  // truePositive = 0;
+  // trueNegative = 0;
+
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   if (dataValidity[i].first == true && dataValidity[i].second == true)
+  //   {
+  //     truePositive++;
+  //   }
+  //   else if (dataValidity[i].first == true && dataValidity[i].second == false)
+  //   {
+  //     falseNegative++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == true)
+  //   {
+  //     falsePositive++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == false)
+  //   {
+  //     trueNegative++;
+  //   }
+  // }
+
+  // // printf("\n");
+  // // printf("Tested with total data set (test + query): %d \n", data_size);
+  // // printf("True Positive: %zu", truePositive);
+  // // printf("\t");
+  // // printf("True Negative: %zu", trueNegative);
+  // // printf("\n");
+  // // printf("False Positive: %zu", falsePositive);
+  // // printf("\t");
+  // // printf("False Negative: %zu", falseNegative);
+  // // printf("\n");
+  // // printf("\n");
+
+  // writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
+
+  // printf("-------------- HomogRibbon64_7 --------------\n");
+  // HomogRibbonFilter<uint64_t, 7> hr7(test_size);
+
+  // // Construction
+  // hr7.AddAll(test_hashes, 0, test_size);
 
   // // Let us check the size of the filter in bytes:
   // filter_volume = hr7.SizeInBytes();
@@ -273,7 +316,7 @@ int main(int argc, char **argv)
   // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
 
   // // Testing
-  // for (int i = 0; i < DATA_SIZE; i++)
+  // for (int i = 0; i < data_size; i++)
   // {
   //   dataValidity[i].second = hr7.Contain(hashes[i]);
   // }
@@ -283,7 +326,7 @@ int main(int argc, char **argv)
   // truePositive = 0;
   // trueNegative = 0;
 
-  // for (int i = 0; i < DATA_SIZE; i++)
+  // for (int i = 0; i < data_size; i++)
   // {
   //   if (dataValidity[i].first == true && dataValidity[i].second == true)
   //   {
@@ -304,7 +347,7 @@ int main(int argc, char **argv)
   // }
 
   // printf("\n");
-  // printf("Tested with total data set (test + query): %d \n", DATA_SIZE);
+  // printf("Tested with total data set (test + query): %d \n", data_size);
   // printf("True Positive: %zu", truePositive);
   // printf("\t");
   // printf("True Negative: %zu", trueNegative);
@@ -316,10 +359,10 @@ int main(int argc, char **argv)
   // printf("\n");
 
   // printf("-------------- HomogRibbon64_13 --------------\n");
-  // HomogRibbonFilter<uint64_t, 13> hr13(TEST_SIZE);
+  // HomogRibbonFilter<uint64_t, 13> hr13(test_size);
 
   // // Construction
-  // hr13.AddAll(test_hashes, 0, TEST_SIZE);
+  // hr13.AddAll(test_hashes, 0, test_size);
 
   // // Let us check the size of the filter in bytes:
   // filter_volume = hr13.SizeInBytes();
@@ -344,7 +387,7 @@ int main(int argc, char **argv)
   // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
 
   // // Testing
-  // for (int i = 0; i < DATA_SIZE; i++)
+  // for (int i = 0; i < data_size; i++)
   // {
   //   dataValidity[i].second = hr13.Contain(hashes[i]);
   // }
@@ -354,7 +397,7 @@ int main(int argc, char **argv)
   // truePositive = 0;
   // trueNegative = 0;
 
-  // for (int i = 0; i < DATA_SIZE; i++)
+  // for (int i = 0; i < data_size; i++)
   // {
   //   if (dataValidity[i].first == true && dataValidity[i].second == true)
   //   {
@@ -375,7 +418,7 @@ int main(int argc, char **argv)
   // }
 
   // printf("\n");
-  // printf("Tested with total data set (test + query): %d \n", DATA_SIZE);
+  // printf("Tested with total data set (test + query): %d \n", data_size);
   // printf("True Positive: %zu", truePositive);
   // printf("\t");
   // printf("True Negative: %zu", trueNegative);
@@ -387,37 +430,61 @@ int main(int argc, char **argv)
   // printf("\n");
 
   // printf("-------------- HomogRibbon64_15 --------------\n");
-  // HomogRibbonFilter<uint64_t, 15> hr15(TEST_SIZE);
+  // HomogRibbonFilter<uint64_t, 15> hr15(test_size), hr15_test(test_size);
 
   // // Construction
-  // hr15.AddAll(test_hashes, 0, TEST_SIZE);
+  // hr15.AddAll(test_hashes, 0, test_size);
 
   // // Let us check the size of the filter in bytes:
   // filter_volume = hr15.SizeInBytes();
-  // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
-  //        100.0 * filter_volume / bytes);
-  // printf("\nfilter memory usage : %1.f bits/entry\n",
-  //        8.0 * filter_volume / test_hashes.size());
-  // printf("\n");
-  // // Let us test the query with bogus strings
+  // // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
+  // //        100.0 * filter_volume / bytes);
+  // // printf("\nfilter memory usage : %1.f bits/entry\n",
+  // //        8.0 * filter_volume / test_hashes.size());
+  // // printf("\n");
 
-  // fpp = 0;
-  // for (auto &ref : bogus_hashes)
+  // // Let us test the query with bogus strings
+  // fp_bogus = 0;
+  // for (int i = 0; i < bogus_size; i++)
   // {
-  //   bool in_set = hr15.Contain(ref);
+  //   bool in_set = 1 - hr15.Contain(bogus_hashes[i]);
   //   if (in_set)
   //   {
-  //     fpp++;
+  //     fp_bogus++;
   //   }
   // }
 
-  // printf("Bogus false-positives: %zu\n", fpp);
-  // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+  // // printf("Bogus false-positives: %zu\n", fpp);
+  // // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+
+  // // printf("Benchmarking queries:\n");
+  // writeStat2(stat2);
+
+  // // printf("Benchmarking queries:\n");
+
+  // pretty_print(inputs.size(), bytes,
+  //              bench([&hashes, &hr15, &dataValidity]()
+  //                    {
+  //                for (int i = 0; i < hashes.size(); i++)
+  //                {
+  //                  dataValidity[i].second = hr15.Contain(hashes[i]);
+  //                } }),
+  //              stat2);
+
+  // // printf("Benchmarking construction speed\n");
+  // pretty_print(test_hashes.size(), bytes,
+  //              bench([&test_hashes, &hr15_test, &size]()
+  //                    { hr15_test.AddAll(test_hashes, 0, size); }),
+  //              stat2);
+
+  // fprintf(stat2, "\n");
+
+  // writeStat1(volume, bytes, filter_volume, stat1);
 
   // // Testing
-  // for (int i = 0; i < DATA_SIZE; i++)
+  // for (int i = 0; i < data_size; i++)
   // {
-  //   dataValidity[i].second = hr15.Contain(hashes[i]);
+  //   dataValidity[i].second = 1 - hr15.Contain(hashes[i]);
   // }
 
   // falsePositive = 0;
@@ -425,7 +492,7 @@ int main(int argc, char **argv)
   // truePositive = 0;
   // trueNegative = 0;
 
-  // for (int i = 0; i < DATA_SIZE; i++)
+  // for (int i = 0; i < data_size; i++)
   // {
   //   if (dataValidity[i].first == true && dataValidity[i].second == true)
   //   {
@@ -445,79 +512,105 @@ int main(int argc, char **argv)
   //   }
   // }
 
-  // printf("\n");
-  // printf("Tested with total data set (test + query): %d \n", DATA_SIZE);
-  // printf("True Positive: %zu", truePositive);
-  // printf("\t");
-  // printf("True Negative: %zu", trueNegative);
-  // printf("\n");
-  // printf("False Positive: %zu", falsePositive);
-  // printf("\t");
-  // printf("False Negative: %zu", falseNegative);
-  // printf("\n");
-  // printf("\n");
+  // // printf("\n");
+  // // printf("Tested with total data set (test + query): %d \n", data_size);
+  // // printf("True Positive: %zu", truePositive);
+  // // printf("\t");
+  // // printf("True Negative: %zu", trueNegative);
+  // // printf("\n");
+  // // printf("False Positive: %zu", falsePositive);
+  // // printf("\t");
+  // // printf("False Negative: %zu", falseNegative);
+  // // printf("\n");
+  // // printf("\n");
+
+  // writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
 
   // printf("-------------- BalancedRibbon64Pack_5 --------------\n");
-  // BalancedRibbonFilter<uint64_t, 5, 0> br5(TEST_SIZE);
+  BalancedRibbonFilter<uint64_t, 5, 0> br5(test_size), br5_test(test_size);
 
-  // // Construction
-  // br5.AddAll(test_hashes, 0, TEST_SIZE);
+  // Construction
+  br5.AddAll(test_hashes, 0, test_size);
 
-  // // Let us check the size of the filter in bytes:
-  // filter_volume = br5.SizeInBytes();
+  // Let us check the size of the filter in bytes:
+  filter_volume = br5.SizeInBytes();
   // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
   //        100.0 * filter_volume / bytes);
   // printf("\nfilter memory usage : %1.f bits/entry\n",
   //        8.0 * filter_volume / test_hashes.size());
   // printf("\n");
-  // // Let us test the query with bogus strings
 
-  // fpp = 0;
-  // for (auto &ref : bogus_hashes)
-  // {
-  //   bool in_set = br5.Contain(ref);
-  //   if (in_set)
-  //   {
-  //     fpp++;
-  //   }
-  // }
+  // Let us test the query with bogus strings
+  fp_bogus = 0;
+  for (int i = 0; i < bogus_size; i++)
+  {
+    bool in_set = 1 - br5.Contain(bogus_hashes[i]);
+    if (in_set)
+    {
+      fp_bogus++;
+    }
+  }
 
   // printf("Bogus false-positives: %zu\n", fpp);
   // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
 
-  // // Testing
-  // for (int i = 0; i < DATA_SIZE; i++)
-  // {
-  //   dataValidity[i].second = br5.Contain(hashes[i]);
-  // }
+  // printf("Benchmarking queries:\n");
+  writeStat2(stat2);
 
-  // falsePositive = 0;
-  // falseNegative = 0;
-  // truePositive = 0;
-  // trueNegative = 0;
+  // printf("Benchmarking queries:\n");
 
-  // for (int i = 0; i < DATA_SIZE; i++)
-  // {
-  //   if (dataValidity[i].first == true && dataValidity[i].second == true)
-  //   {
-  //     truePositive++;
-  //   }
-  //   else if (dataValidity[i].first == true && dataValidity[i].second == false)
-  //   {
-  //     falseNegative++;
-  //   }
-  //   else if (dataValidity[i].first == false && dataValidity[i].second == true)
-  //   {
-  //     falsePositive++;
-  //   }
-  //   else if (dataValidity[i].first == false && dataValidity[i].second == false)
-  //   {
-  //     trueNegative++;
-  //   }
-  // }
+  pretty_print(inputs.size(), bytes,
+               bench([&hashes, &br5, &dataValidity]()
+                     {
+                 for (int i = 0; i < hashes.size(); i++)
+                 {
+                   dataValidity[i].second = br5.Contain(hashes[i]);
+                 } }),
+               stat2);
+
+  // printf("Benchmarking construction speed\n");
+  pretty_print(test_hashes.size(), bytes,
+               bench([&test_hashes, &br5_test, &size]()
+                     { br5_test.AddAll(test_hashes, 0, size); }),
+               stat2);
+
+  fprintf(stat2, "\n");
+
+  writeStat1(volume, bytes, filter_volume, stat1);
+
+  // Testing
+  for (int i = 0; i < data_size; i++)
+  {
+    dataValidity[i].second = 1 - br5.Contain(hashes[i]);
+  }
+
+  falsePositive = 0;
+  falseNegative = 0;
+  truePositive = 0;
+  trueNegative = 0;
+
+  for (int i = 0; i < data_size; i++)
+  {
+    if (dataValidity[i].first == true && dataValidity[i].second == true)
+    {
+      truePositive++;
+    }
+    else if (dataValidity[i].first == true && dataValidity[i].second == false)
+    {
+      falseNegative++;
+    }
+    else if (dataValidity[i].first == false && dataValidity[i].second == true)
+    {
+      falsePositive++;
+    }
+    else if (dataValidity[i].first == false && dataValidity[i].second == false)
+    {
+      trueNegative++;
+    }
+  }
 
   // printf("\n");
-  // printf("Tested with total data set (test + query): %d \n", DATA_SIZE);
+  // printf("Tested with total data set (test + query): %d \n", data_size);
   // printf("True Positive: %zu", truePositive);
   // printf("\t");
   // printf("True Negative: %zu", trueNegative);
@@ -528,11 +621,13 @@ int main(int argc, char **argv)
   // printf("\n");
   // printf("\n");
 
+  writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
+
   // printf("-------------- BalancedRibbon64Pack_7 --------------\n");
-  // BalancedRibbonFilter<uint64_t, 7, 0> br7(TEST_SIZE);
+  // BalancedRibbonFilter<uint64_t, 7, 0> br7(test_size);
 
   // // Construction
-  // br7.AddAll(test_hashes, 0, TEST_SIZE);
+  // br7.AddAll(test_hashes, 0, test_size);
 
   // // Let us check the size of the filter in bytes:
   // filter_volume = br7.SizeInBytes();
@@ -557,7 +652,7 @@ int main(int argc, char **argv)
   // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
 
   // // Testing
-  // for (int i = 0; i < DATA_SIZE; i++)
+  // for (int i = 0; i < data_size; i++)
   // {
   //   dataValidity[i].second = br7.Contain(hashes[i]);
   // }
@@ -567,7 +662,7 @@ int main(int argc, char **argv)
   // truePositive = 0;
   // trueNegative = 0;
 
-  // for (int i = 0; i < DATA_SIZE; i++)
+  // for (int i = 0; i < data_size; i++)
   // {
   //   if (dataValidity[i].first == true && dataValidity[i].second == true)
   //   {
@@ -588,7 +683,7 @@ int main(int argc, char **argv)
   // }
 
   // printf("\n");
-  // printf("Tested with total data set (test + query): %d \n", DATA_SIZE);
+  // printf("Tested with total data set (test + query): %d \n", data_size);
   // printf("True Positive: %zu", truePositive);
   // printf("\t");
   // printf("True Negative: %zu", trueNegative);
@@ -600,10 +695,10 @@ int main(int argc, char **argv)
   // printf("\n");
 
   // printf("-------------- BalancedRibbon64Pack_13 --------------\n");
-  // BalancedRibbonFilter<uint64_t, 13, 0> br13(TEST_SIZE);
+  // BalancedRibbonFilter<uint64_t, 13, 0> br13(test_size);
 
   // // Construction
-  // br13.AddAll(test_hashes, 0, TEST_SIZE);
+  // br13.AddAll(test_hashes, 0, test_size);
 
   // // Let us check the size of the filter in bytes:
   // filter_volume = br13.SizeInBytes();
@@ -628,7 +723,7 @@ int main(int argc, char **argv)
   // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
 
   // // Testing
-  // for (int i = 0; i < DATA_SIZE; i++)
+  // for (int i = 0; i < data_size; i++)
   // {
   //   dataValidity[i].second = br13.Contain(hashes[i]);
   // }
@@ -638,7 +733,7 @@ int main(int argc, char **argv)
   // truePositive = 0;
   // trueNegative = 0;
 
-  // for (int i = 0; i < DATA_SIZE; i++)
+  // for (int i = 0; i < data_size; i++)
   // {
   //   if (dataValidity[i].first == true && dataValidity[i].second == true)
   //   {
@@ -659,7 +754,7 @@ int main(int argc, char **argv)
   // }
 
   // printf("\n");
-  // printf("Tested with total data set (test + query): %d \n", DATA_SIZE);
+  // printf("Tested with total data set (test + query): %d \n", data_size);
   // printf("True Positive: %zu", truePositive);
   // printf("\t");
   // printf("True Negative: %zu", trueNegative);
@@ -671,37 +766,61 @@ int main(int argc, char **argv)
   // printf("\n");
 
   // printf("-------------- BalancedRibbon64Pack_15 --------------\n");
-  // BalancedRibbonFilter<uint64_t, 15, 0> br15(TEST_SIZE);
+  // BalancedRibbonFilter<uint64_t, 15, 0> br15(test_size), br15_test(test_size);
 
   // // Construction
-  // br15.AddAll(test_hashes, 0, TEST_SIZE);
+  // br15.AddAll(test_hashes, 0, test_size);
 
   // // Let us check the size of the filter in bytes:
   // filter_volume = br15.SizeInBytes();
-  // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
-  //        100.0 * filter_volume / bytes);
-  // printf("\nfilter memory usage : %1.f bits/entry\n",
-  //        8.0 * filter_volume / test_hashes.size());
-  // printf("\n");
-  // // Let us test the query with bogus strings
+  // // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
+  // //        100.0 * filter_volume / bytes);
+  // // printf("\nfilter memory usage : %1.f bits/entry\n",
+  // //        8.0 * filter_volume / test_hashes.size());
+  // // printf("\n");
 
-  // fpp = 0;
-  // for (auto &ref : bogus_hashes)
+  // // Let us test the query with bogus strings
+  // fp_bogus = 0;
+  // for (int i = 0; i < bogus_size; i++)
   // {
-  //   bool in_set = br15.Contain(ref);
+  //   bool in_set = 1 - br15.Contain(bogus_hashes[i]);
   //   if (in_set)
   //   {
-  //     fpp++;
+  //     fp_bogus++;
   //   }
   // }
 
-  // printf("Bogus false-positives: %zu\n", fpp);
-  // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+  // // printf("Bogus false-positives: %zu\n", fpp);
+  // // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+
+  // // printf("Benchmarking queries:\n");
+  // writeStat2(stat2);
+
+  // // printf("Benchmarking queries:\n");
+
+  // pretty_print(inputs.size(), bytes,
+  //              bench([&hashes, &br15, &dataValidity]()
+  //                    {
+  //                for (int i = 0; i < hashes.size(); i++)
+  //                {
+  //                  dataValidity[i].second = br15.Contain(hashes[i]);
+  //                } }),
+  //              stat2);
+
+  // // printf("Benchmarking construction speed\n");
+  // pretty_print(test_hashes.size(), bytes,
+  //              bench([&test_hashes, &br15_test, &size]()
+  //                    { br15_test.AddAll(test_hashes, 0, size); }),
+  //              stat2);
+
+  // fprintf(stat2, "\n");
+
+  // writeStat1(volume, bytes, filter_volume, stat1);
 
   // // Testing
-  // for (int i = 0; i < DATA_SIZE; i++)
+  // for (int i = 0; i < data_size; i++)
   // {
-  //   dataValidity[i].second = br15.Contain(hashes[i]);
+  //   dataValidity[i].second = 1 - br15.Contain(hashes[i]);
   // }
 
   // falsePositive = 0;
@@ -709,7 +828,7 @@ int main(int argc, char **argv)
   // truePositive = 0;
   // trueNegative = 0;
 
-  // for (int i = 0; i < DATA_SIZE; i++)
+  // for (int i = 0; i < data_size; i++)
   // {
   //   if (dataValidity[i].first == true && dataValidity[i].second == true)
   //   {
@@ -729,8 +848,301 @@ int main(int argc, char **argv)
   //   }
   // }
 
+  // // printf("\n");
+  // // printf("Tested with total data set (test + query): %d \n", data_size);
+  // // printf("True Positive: %zu", truePositive);
+  // // printf("\t");
+  // // printf("True Negative: %zu", trueNegative);
+  // // printf("\n");
+  // // printf("False Positive: %zu", falsePositive);
+  // // printf("\t");
+  // // printf("False Negative: %zu", falseNegative);
+  // // printf("\n");
+  // // printf("\n");
+
+  // writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
+
+  /// working
+
+  // printf("-------------- StandardRibbon64_25PctPad_7 --------------\n");
+  // StandardRibbonFilter<uint64_t, 7, 25> sr7_25(test_size), sr7_25_test(test_size);
+
+  // // Construction
+  // sr7_25.AddAll(test_hashes, 0, test_size);
+
+  // // Let us check the size of the filter in bytes:
+  // filter_volume = sr7_25.SizeInBytes();
+  // // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
+  // //        100.0 * filter_volume / bytes);
+  // // printf("\nfilter memory usage : %1.f bits/entry\n",
+  // //        8.0 * filter_volume / test_hashes.size());
+  // // printf("\n");
+
+  // // Let us test the query with bogus strings
+  // fp_bogus = 0;
+  // for (int i = 0; i < bogus_size; i++)
+  // {
+  //   bool in_set = 1 - sr7_25.Contain(bogus_hashes[i]);
+  //   if (in_set)
+  //   {
+  //     fp_bogus++;
+  //   }
+  // }
+
+  // // printf("Bogus false-positives: %zu\n", fpp);
+  // // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+
+  // // printf("Benchmarking queries:\n");
+  // writeStat2(stat2);
+
+  // // printf("Benchmarking queries:\n");
+
+  // pretty_print(inputs.size(), bytes,
+  //              bench([&hashes, &sr7_25, &dataValidity]()
+  //                    {
+  //                for (int i = 0; i < hashes.size(); i++)
+  //                {
+  //                  dataValidity[i].second = sr7_25.Contain(hashes[i]);
+  //                } }),
+  //              stat2);
+
+  // // printf("Benchmarking construction speed\n");
+  // pretty_print(test_hashes.size(), bytes,
+  //              bench([&test_hashes, &sr7_25_test, &size]()
+  //                    { sr7_25_test.AddAll(test_hashes, 0, size); }),
+  //              stat2);
+
+  // fprintf(stat2, "\n");
+
+  // writeStat1(volume, bytes, filter_volume, stat1);
+
+  // // Testing
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   dataValidity[i].second = 1 - sr7_25.Contain(hashes[i]);
+  // }
+
+  // falsePositive = 0;
+  // falseNegative = 0;
+  // truePositive = 0;
+  // trueNegative = 0;
+
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   if (dataValidity[i].first == true && dataValidity[i].second == true)
+  //   {
+  //     truePositive++;
+  //   }
+  //   else if (dataValidity[i].first == true && dataValidity[i].second == false)
+  //   {
+  //     falseNegative++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == true)
+  //   {
+  //     falsePositive++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == false)
+  //   {
+  //     trueNegative++;
+  //   }
+  // }
+
+  // // printf("\n");
+  // // printf("Tested with total data set (test + query): %d \n", data_size);
+  // // printf("True Positive: %zu", truePositive);
+  // // printf("\t");
+  // // printf("True Negative: %zu", trueNegative);
+  // // printf("\n");
+  // // printf("False Positive: %zu", falsePositive);
+  // // printf("\t");
+  // // printf("False Negative: %zu", falseNegative);
+  // // printf("\n");
+  // // printf("\n");
+
+  // writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
+
+  // printf("-------------- StandardRibbon64_10PctPad_7 --------------\n");
+  // BalancedRibbonFilter<uint64_t, 7, 10> sr7_10(test_size), sr7_10_test(test_size);
+
+  // // Construction
+  // sr7_10.AddAll(test_hashes, 0, test_size);
+
+  // // Let us check the size of the filter in bytes:
+  // filter_volume = sr7_10.SizeInBytes();
+  // // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
+  // //        100.0 * filter_volume / bytes);
+  // // printf("\nfilter memory usage : %1.f bits/entry\n",
+  // //        8.0 * filter_volume / test_hashes.size());
+  // // printf("\n");
+
+  // // Let us test the query with bogus strings
+  // fp_bogus = 0;
+  // for (int i = 0; i < bogus_size; i++)
+  // {
+  //   bool in_set = 1 - sr7_10.Contain(bogus_hashes[i]);
+  //   if (in_set)
+  //   {
+  //     fp_bogus++;
+  //   }
+  // }
+
+  // // printf("Bogus false-positives: %zu\n", fpp);
+  // // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+
+  // // printf("Benchmarking queries:\n");
+  // writeStat2(stat2);
+
+  // // printf("Benchmarking queries:\n");
+
+  // pretty_print(inputs.size(), bytes,
+  //              bench([&hashes, &sr7_10, &dataValidity]()
+  //                    {
+  //                for (int i = 0; i < hashes.size(); i++)
+  //                {
+  //                  dataValidity[i].second = sr7_10.Contain(hashes[i]);
+  //                } }),
+  //              stat2);
+
+  // // printf("Benchmarking construction speed\n");
+  // pretty_print(test_hashes.size(), bytes,
+  //              bench([&test_hashes, &sr7_10_test, &size]()
+  //                    { sr7_10_test.AddAll(test_hashes, 0, size); }),
+  //              stat2);
+
+  // fprintf(stat2, "\n");
+
+  // writeStat1(volume, bytes, filter_volume, stat1);
+
+  // // Testing
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   dataValidity[i].second = 1 - sr7_10.Contain(hashes[i]);
+  // }
+
+  // falsePositive = 0;
+  // falseNegative = 0;
+  // truePositive = 0;
+  // trueNegative = 0;
+
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   if (dataValidity[i].first == true && dataValidity[i].second == true)
+  //   {
+  //     truePositive++;
+  //   }
+  //   else if (dataValidity[i].first == true && dataValidity[i].second == false)
+  //   {
+  //     falseNegative++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == true)
+  //   {
+  //     falsePositive++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == false)
+  //   {
+  //     trueNegative++;
+  //   }
+  // }
+
+  // // printf("\n");
+  // // printf("Tested with total data set (test + query): %d \n", data_size);
+  // // printf("True Positive: %zu", truePositive);
+  // // printf("\t");
+  // // printf("True Negative: %zu", trueNegative);
+  // // printf("\n");
+  // // printf("False Positive: %zu", falsePositive);
+  // // printf("\t");
+  // // printf("False Negative: %zu", falseNegative);
+  // // printf("\n");
+  // // printf("\n");
+
+  // writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
+
+  // printf("-------------- StandardRibbon64_15 --------------\n");
+  BalancedRibbonFilter<uint64_t, 15, 0> sr15(test_size), sr15_test(test_size);
+
+  // Construction
+  sr15.AddAll(test_hashes, 0, test_size);
+
+  // Let us check the size of the filter in bytes:
+  filter_volume = sr15.SizeInBytes();
+  // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
+  //        100.0 * filter_volume / bytes);
+  // printf("\nfilter memory usage : %1.f bits/entry\n",
+  //        8.0 * filter_volume / test_hashes.size());
   // printf("\n");
-  // printf("Tested with total data set (test + query): %d \n", DATA_SIZE);
+
+  // Let us test the query with bogus strings
+  fp_bogus = 0;
+  for (int i = 0; i < bogus_size; i++)
+  {
+    bool in_set = 1 - sr15.Contain(bogus_hashes[i]);
+    if (in_set)
+    {
+      fp_bogus++;
+    }
+  }
+
+  // printf("Bogus false-positives: %zu\n", fpp);
+  // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+
+  // printf("Benchmarking queries:\n");
+  writeStat2(stat2);
+
+  // printf("Benchmarking queries:\n");
+
+  pretty_print(inputs.size(), bytes,
+               bench([&hashes, &sr15, &dataValidity]()
+                     {
+                 for (int i = 0; i < hashes.size(); i++)
+                 {
+                   dataValidity[i].second = sr15.Contain(hashes[i]);
+                 } }),
+               stat2);
+
+  // printf("Benchmarking construction speed\n");
+  pretty_print(test_hashes.size(), bytes,
+               bench([&test_hashes, &sr15_test, &size]()
+                     { sr15_test.AddAll(test_hashes, 0, size); }),
+               stat2);
+
+  fprintf(stat2, "\n");
+
+  writeStat1(volume, bytes, filter_volume, stat1);
+
+  // Testing
+  for (int i = 0; i < data_size; i++)
+  {
+    dataValidity[i].second = 1 - sr15.Contain(hashes[i]);
+  }
+
+  falsePositive = 0;
+  falseNegative = 0;
+  truePositive = 0;
+  trueNegative = 0;
+
+  for (int i = 0; i < data_size; i++)
+  {
+    if (dataValidity[i].first == true && dataValidity[i].second == true)
+    {
+      truePositive++;
+    }
+    else if (dataValidity[i].first == true && dataValidity[i].second == false)
+    {
+      falseNegative++;
+    }
+    else if (dataValidity[i].first == false && dataValidity[i].second == true)
+    {
+      falsePositive++;
+    }
+    else if (dataValidity[i].first == false && dataValidity[i].second == false)
+    {
+      trueNegative++;
+    }
+  }
+
+  // printf("\n");
+  // printf("Tested with total data set (test + query): %d \n", data_size);
   // printf("True Positive: %zu", truePositive);
   // printf("\t");
   // printf("True Negative: %zu", trueNegative);
@@ -741,209 +1153,11 @@ int main(int argc, char **argv)
   // printf("\n");
   // printf("\n");
 
-  printf("-------------- StandardRibbon64_25PctPad_7 --------------\n");
-  StandardRibbonFilter<uint64_t, 7, 25> sr7_25(TEST_SIZE);
+  writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
 
-  // Construction
-  sr7_25.AddAll(test_hashes, 0, TEST_SIZE);
-
-  // Let us check the size of the filter in bytes:
-  filter_volume = sr7_25.SizeInBytes();
-  printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
-         100.0 * filter_volume / bytes);
-  printf("\nfilter memory usage : %1.f bits/entry\n",
-         8.0 * filter_volume / test_hashes.size());
-  printf("\n");
-  // Let us test the query with bogus strings
-
-  fpp = 0;
-  for (auto &ref : bogus_hashes)
-  {
-    bool in_set = sr7_25.Contain(ref);
-    if (in_set)
-    {
-      fpp++;
-    }
-  }
-
-  printf("Bogus false-positives: %zu\n", fpp);
-  printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
-
-  // Testing
-  for (int i = 0; i < DATA_SIZE; i++)
-  {
-    dataValidity[i].second = sr7_25.Contain(hashes[i]);
-  }
-
-  falsePositive = falseNegative = truePositive = trueNegative = 0;
-
-  for (int i = 0; i < DATA_SIZE; i++)
-  {
-    if (dataValidity[i].first == true && dataValidity[i].second == true)
-    {
-      truePositive++;
-    }
-    else if (dataValidity[i].first == true && dataValidity[i].second == false)
-    {
-      falseNegative++;
-    }
-    else if (dataValidity[i].first == false && dataValidity[i].second == true)
-    {
-      falsePositive++;
-    }
-    else if (dataValidity[i].first == false && dataValidity[i].second == false)
-    {
-      trueNegative++;
-    }
-  }
-
-  printf("\n");
-  printf("Tested with total data set (test + query): %d \n", DATA_SIZE);
-  printf("True Positive: %zu", truePositive);
-  printf("\t");
-  printf("True Negative: %zu", trueNegative);
-  printf("\n");
-  printf("False Positive: %zu", falsePositive);
-  printf("\t");
-  printf("False Negative: %zu", falseNegative);
-  printf("\n");
-  printf("\n");
-
-  printf("-------------- StandardRibbon64_10PctPad_7 --------------\n");
-  BalancedRibbonFilter<uint64_t, 7, 10> sr7_10(TEST_SIZE);
-
-  // Construction
-  sr7_10.AddAll(test_hashes, 0, TEST_SIZE);
-
-  // Let us check the size of the filter in bytes:
-  filter_volume = sr7_10.SizeInBytes();
-  printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
-         100.0 * filter_volume / bytes);
-  printf("\nfilter memory usage : %1.f bits/entry\n",
-         8.0 * filter_volume / test_hashes.size());
-  printf("\n");
-  // Let us test the query with bogus strings
-
-  fpp = 0;
-  for (auto &ref : bogus_hashes)
-  {
-    bool in_set = sr7_10.Contain(ref);
-    if (in_set)
-    {
-      fpp++;
-    }
-  }
-
-  printf("Bogus false-positives: %zu\n", fpp);
-  printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
-
-  // Testing
-  for (int i = 0; i < DATA_SIZE; i++)
-  {
-    dataValidity[i].second = sr7_10.Contain(hashes[i]);
-  }
-
-  falsePositive = falseNegative = truePositive = trueNegative = 0;
-
-  for (int i = 0; i < DATA_SIZE; i++)
-  {
-    if (dataValidity[i].first == true && dataValidity[i].second == true)
-    {
-      truePositive++;
-    }
-    else if (dataValidity[i].first == true && dataValidity[i].second == false)
-    {
-      falseNegative++;
-    }
-    else if (dataValidity[i].first == false && dataValidity[i].second == true)
-    {
-      falsePositive++;
-    }
-    else if (dataValidity[i].first == false && dataValidity[i].second == false)
-    {
-      trueNegative++;
-    }
-  }
-
-  printf("\n");
-  printf("Tested with total data set (test + query): %d \n", DATA_SIZE);
-  printf("True Positive: %zu", truePositive);
-  printf("\t");
-  printf("True Negative: %zu", trueNegative);
-  printf("\n");
-  printf("False Positive: %zu", falsePositive);
-  printf("\t");
-  printf("False Negative: %zu", falseNegative);
-  printf("\n");
-  printf("\n");
-
-  printf("-------------- StandardRibbon64_15 --------------\n");
-  BalancedRibbonFilter<uint64_t, 15, 0> sr15(TEST_SIZE);
-
-  // Construction
-  sr15.AddAll(test_hashes, 0, TEST_SIZE);
-
-  // Let us check the size of the filter in bytes:
-  filter_volume = sr15.SizeInBytes();
-  printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
-         100.0 * filter_volume / bytes);
-  printf("\nfilter memory usage : %1.f bits/entry\n",
-         8.0 * filter_volume / test_hashes.size());
-  printf("\n");
-  // Let us test the query with bogus strings
-
-  fpp = 0;
-  for (auto &ref : bogus_hashes)
-  {
-    bool in_set = sr15.Contain(ref);
-    if (in_set)
-    {
-      fpp++;
-    }
-  }
-
-  printf("Bogus false-positives: %zu\n", fpp);
-  printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
-
-  // Testing
-  for (int i = 0; i < DATA_SIZE; i++)
-  {
-    dataValidity[i].second = sr15.Contain(hashes[i]);
-  }
-
-  falsePositive = falseNegative = truePositive = trueNegative = 0;
-
-  for (int i = 0; i < DATA_SIZE; i++)
-  {
-    if (dataValidity[i].first == true && dataValidity[i].second == true)
-    {
-      truePositive++;
-    }
-    else if (dataValidity[i].first == true && dataValidity[i].second == false)
-    {
-      falseNegative++;
-    }
-    else if (dataValidity[i].first == false && dataValidity[i].second == true)
-    {
-      falsePositive++;
-    }
-    else if (dataValidity[i].first == false && dataValidity[i].second == false)
-    {
-      trueNegative++;
-    }
-  }
-
-  printf("\n");
-  printf("Tested with total data set (test + query): %d \n", DATA_SIZE);
-  printf("True Positive: %zu", truePositive);
-  printf("\t");
-  printf("True Negative: %zu", trueNegative);
-  printf("\n");
-  printf("False Positive: %zu", falsePositive);
-  printf("\t");
-  printf("False Negative: %zu", falseNegative);
-  printf("\n");
-  printf("\n");
+  fclose(data_reliability);
+  fclose(stat1);
+  fclose(stat2);
 
   return EXIT_SUCCESS;
 }

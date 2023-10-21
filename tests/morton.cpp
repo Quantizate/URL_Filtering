@@ -16,7 +16,7 @@ using namespace cuckoofilter;
 // #define BOGUS_SIZE 1000000
 // #define QUERY_SIZE (DATA_SIZE - TEST_SIZE)
 
-int data_size = 0, filter_size, test_size, bogus_size = 1000000, query_size;
+int data_size = 0, test_size, bogus_size = 1000000, query_size, filter_size;
 
 std::string random_string()
 {
@@ -118,9 +118,10 @@ int main(int argc, char **argv)
   FILE *stat1 = fopen(argv[4], "a");
   FILE *stat2 = fopen(argv[5], "a");
 
-  test_size = convert(argv[2]);
+  test_size = filter_size = convert(argv[2]);
   query_size = data_size - test_size;
 
+  bool is_ok;
   size_t fp_bogus = 0;
   size_t filter_volume = 0;
   size_t falsePositive = 0, falseNegative = 0, truePositive = 0, trueNegative = 0;
@@ -158,6 +159,18 @@ int main(int argc, char **argv)
     }
   }
 
+  // DONT CHECK THIS CAUTION CUZ THIS WILL SORT AND FURTHER MESS UP VALUES
+  // std::sort(hashes.begin(), hashes.end());
+  // auto dup = std::adjacent_find(hashes.begin(), hashes.end());
+  // size_t dup_hashes = 0;
+  // while (dup != hashes.end())
+  // {
+  //   dup_hashes++;
+  //   dup = std::adjacent_find(dup + 1, hashes.end());
+  // }
+  // printf("number of duplicates hashes %zu\n", count);
+  // printf("ratio of duplicates  hashes %f\n", count / double(test_hashes.size()));
+
   size_t size = test_hashes.size();
 
   std::vector<std::string> query_set_bogus;
@@ -172,16 +185,15 @@ int main(int argc, char **argv)
     bogus_hashes[i] = simple_hash(query_set_bogus[i]);
   }
 
+  // printf("\n");
+  // printf("Test size(added to filter): %d \n", test_size);
+  // printf("Query size(not added to filter): %d \n", query_size);
+  // printf("Bogus size(randomly generated strings): %d \n", bogus_size);
+  // printf("\n");
+
   // printf("-------------- Morton 3 slot bucket with 8bit fingerprint Filter --------------\n");
-  /*******************************
-   * Let us benchmark the filter!
-   ******************************/
-  /**
-   * A filter is a simple data structure that can be easily serialized (e.g., to disk).
-   * https://github.com/FastFilter/xor_singleheader#persistent-usage
-   */
   // // Memory allocation (trivial):
-  MortonFilter filter(filter_size), filter_test(test_size);
+  MortonFilter filter(filter_size);
 
   // Construction
   filter.AddAll(test_hashes, 0, test_size);
@@ -206,26 +218,32 @@ int main(int argc, char **argv)
     }
   }
 
-  printf("Bogus false-positives: %zu\n", fp_bogus);
+  // printf("Bogus false-positives: %zu\n", fpp);
   // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+
+  volatile size_t basic_count = 0;
 
   writeStat2(stat2);
 
-  // Benchmarking queries:
-  pretty_print(inputs.size(), bytes,
-               bench([&hashes, &filter, &dataValidity]()
+  // printf("Benchmarking queries:\n");
+
+  pretty_print(hashes.size(), bytes,
+               bench([&hashes, &filter, &basic_count]()
                      {
-                 for (int i = 0; i < data_size; i++)
-                 {
-                   dataValidity[i].second = filter.Contain(hashes[i]);
+                 for (int i = 0; i < hashes.size(); i++) {
+                   basic_count +=
+                       filter.Contain(hashes[i]);
                  } }),
                stat2);
 
-  // Benchmarking construction speed
-  pretty_print(test_hashes.size(), bytes,
-               bench([&test_hashes, &filter_test, &size]()
-                     { filter_test.AddAll(test_hashes, 0, size); }),
-               stat2);
+  // printf("Benchmarking construction speed\n");
+
+  // pretty_print(inputs.size(), bytes, "binary_fuse16_populate",
+  //              bench([&test_hashes, &filter4, &size]()
+  //                    {
+  //               for(uint64_t &ref : test_hashes){
+  //                 size += 64;
+  //                filter4.Add(ref);} }));
 
   fprintf(stat2, "\n");
 
