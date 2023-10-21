@@ -1100,7 +1100,7 @@ public:
     }
   }
   ~XorSingle() { xor8_free(&filter); }
-  bool AddAll(const uint64_t *data, const size_t start, const size_t end)
+  bool AddAll(uint64_t *data, const size_t start, const size_t end)
   {
     return xor8_buffered_populate(data + start, end - start, &filter);
   }
@@ -1130,7 +1130,7 @@ struct FilterAPI<XorSingle>
   {
     throw std::runtime_error("Unsupported");
   }
-  static void AddAll(const vector<uint64_t> &keys, const size_t start,
+  static void AddAll(vector<uint64_t> &keys, const size_t start,
                      const size_t end, Table *table)
   {
     table->AddAll(keys.data(), start, end);
@@ -1158,7 +1158,7 @@ public:
     }
   }
   ~BinaryFuseSingle() { binary_fuse8_free(&filter); }
-  bool AddAll(const uint64_t *data, const size_t start, const size_t end)
+  bool AddAll(uint64_t *data, const size_t start, const size_t end)
   {
     return binary_fuse8_populate(data + start, end - start, &filter);
   }
@@ -1191,7 +1191,7 @@ struct FilterAPI<BinaryFuseSingle>
   {
     throw std::runtime_error("Unsupported");
   }
-  static void AddAll(const vector<uint64_t> &keys, const size_t start,
+  static void AddAll(vector<uint64_t> &keys, const size_t start,
                      const size_t end, Table *table)
   {
     table->AddAll(keys.data(), start, end);

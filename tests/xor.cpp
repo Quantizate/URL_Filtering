@@ -11,10 +11,12 @@ extern "C"
 #include "./xorfilter/xorfilter_singleheader.h"
 }
 
-#define DATA_SIZE 1000000
-#define TEST_SIZE 500000
-#define BOGUS_SIZE 1000000
-#define QUERY_SIZE (DATA_SIZE - TEST_SIZE)
+// #define DATA_SIZE 1000000
+// #define TEST_SIZE 500000
+// #define BOGUS_SIZE 1000000
+// #define QUERY_SIZE (DATA_SIZE - TEST_SIZE)
+
+int data_size = 0, test_size, bogus_size = 1000000, query_size;
 
 std::string random_string()
 {
@@ -31,28 +33,38 @@ std::string random_string()
   return str;
 }
 
-void pretty_print(size_t volume, size_t bytes, std::string name,
-                  event_aggregate agg)
+int convert(char *str)
 {
-  printf("%-30s : ", name.c_str());
-  printf(" %5.2f GB/s ", bytes / agg.fastest_elapsed_ns());
-  printf(" %5.1f Ma/s ", volume * 1000.0 / agg.fastest_elapsed_ns());
-  printf(" %5.2f ns/d ", agg.fastest_elapsed_ns() / volume);
-  if (collector.has_events())
-  {
-    printf(" %5.2f GHz ", agg.fastest_cycles() / agg.fastest_elapsed_ns());
-    printf(" %5.2f c/d ", agg.fastest_cycles() / volume);
-    printf(" %5.2f i/d ", agg.fastest_instructions() / volume);
-    printf(" %5.1f c/b ", agg.fastest_cycles() / bytes);
-    printf(" %5.2f i/b ", agg.fastest_instructions() / bytes);
-    printf(" %5.2f i/c ", agg.fastest_instructions() / agg.fastest_cycles());
-  }
-  printf("\n");
+  int num = 0;
+
+  for (int i = 0; str[i] != '\0'; i++)
+    num = num * 10 + str[i] - '0';
+  return num;
 }
 
-void writeOutput(std::string filterName, size_t tp, size_t tn, size_t fp, size_t fn, FILE *filename, size_t bp)
+void pretty_print(size_t volume, size_t bytes, // std::string name,
+                  event_aggregate agg, FILE *filename)
 {
-  fprintf(filename, "%s,%zu,%zu,%zu,%zu,%d,%zu\n", filterName.c_str(), tp, tn, fp, fn, BOGUS_SIZE, bp);
+  fprintf(filename, ",%.2f,%.2f,%.2f", bytes / agg.fastest_elapsed_ns(), volume * 1000.0 / agg.fastest_elapsed_ns(), agg.fastest_elapsed_ns() / volume);
+}
+
+// data size, test size, true positive, true negative, false positive, false negative, bogus size, false_pos_bogus, duplicates data
+void writeOutput(size_t tp, size_t tn, size_t fp, size_t fn, size_t fp_bogus, int dup_num, FILE *filename)
+{
+  fprintf(filename, "%d,%d,%zu,%zu,%zu,%zu,%d,%zu,%d\n", data_size, test_size, tp, tn, fp, fn, bogus_size, fp_bogus, dup_num);
+}
+
+// data_size, test_size, total_data_volume, average_len (bytes/name), test_volume, filter_volume, %usage(wrt to test_volume), usuage (wrt to test_size[bits / entry])
+void writeStat1(size_t input_volume, size_t test_volume, size_t filter_volume, FILE *filename)
+{
+  fprintf(filename, "%d,%d,%zu,%.1f,%zu,%zu,%.2f %%,%.1f\n", data_size, test_size, input_volume, double(input_volume) / data_size, test_volume, filter_volume, 100.0 * filter_volume / test_volume, 8.0 * filter_volume / test_size);
+}
+
+// data_size, test_size, Benchmarking queries[time/entry, GB/s, Ma/s, ns/d], Benchmarking construction[time/entry, GB/s, Ma/s, ns/d]
+
+void writeStat2(FILE *filename)
+{
+  fprintf(filename, "%d,%d", data_size, test_size);
 }
 
 uint64_t simple_hash(const std::string &line)
@@ -68,9 +80,9 @@ uint64_t simple_hash(const std::string &line)
 
 int main(int argc, char **argv)
 {
-  FILE *outputFile = fopen("values.csv", "a");
   std::vector<std::string> inputs;
-  std::vector<std::pair<bool, bool>> dataValidity(DATA_SIZE, {false, false}); // original, modified
+
+  size_t volume = 0;
 
   if (argc == 1)
   {
@@ -97,182 +109,182 @@ int main(int argc, char **argv)
                 ref.end());
       volume += ref.size();
       inputs.push_back(ref);
+      data_size++;
     }
-    std::cout << "loaded " << inputs.size() << " names" << std::endl;
-    std::cout << "average length " << double(volume) / inputs.size()
-              << " bytes/name" << std::endl;
+    // std::cout << "loaded " << inputs.size() << " names" << std::endl;
+    // std::cout << "average length " << double(volume) / inputs.size()
+    //           << " bytes/name" << std::endl;
   }
-  printf("\n");
-  /* We are going to check for duplicates. If you have too many duplicates, something might be wrong. */
+  // printf("\n");
+  FILE *data_reliability = fopen(argv[3], "a");
+  FILE *stat1 = fopen(argv[4], "a");
+  FILE *stat2 = fopen(argv[5], "a");
 
+  test_size = convert(argv[2]);
+  query_size = data_size - test_size;
+
+  bool is_ok;
+  size_t fp_bogus = 0;
+  size_t filter_volume = 0;
+  size_t falsePositive = 0, falseNegative = 0, truePositive = 0, trueNegative = 0;
+
+  std::vector<std::pair<bool, bool>> dataValidity(data_size, {false, false}); // original, modified
+
+  /* We are going to check for duplicates. If you have too many duplicates, something might be wrong. */
+  int dup_num = 0;
   std::sort(inputs.begin(), inputs.end());
   auto dup_str = std::adjacent_find(inputs.begin(), inputs.end());
   while (dup_str != inputs.end())
   {
-    std::cout << "duplicated string " << *dup_str << std::endl;
+    // std::cout << "duplicated string " << *dup_str << std::endl;
     dup_str = std::adjacent_find(dup_str + 1, inputs.end());
+    dup_num++;
   }
   size_t bytes = 0;
-  for (int i = 0; i < TEST_SIZE; i++)
+  for (int i = 0; i < test_size; i++)
   {
     bytes += inputs[i].size();
   }
-  printf("total volume %zu bytes\n", bytes);
+  // printf("total volume %zu bytes\n", bytes);
+
   /* We are going to test our hash function to make sure that it is sane. */
 
   // hashes is *temporary* and does not count in the memory budget
-  std::vector<uint64_t> test_hashes(TEST_SIZE), hashes(DATA_SIZE), bogus_hashes(BOGUS_SIZE);
-  for (size_t i = 0; i < DATA_SIZE; i++)
+  std::vector<uint64_t> test_hashes(test_size), hashes(data_size), bogus_hashes(bogus_size);
+  for (size_t i = 0; i < (size_t)data_size; i++)
   {
     hashes[i] = simple_hash(inputs[i]);
-    if (i < TEST_SIZE)
+    if (i < (size_t)test_size)
     {
       test_hashes[i] = hashes[i];
       dataValidity[i].first = true;
     }
   }
-  std::sort(test_hashes.begin(), test_hashes.end());
-  auto dup = std::adjacent_find(test_hashes.begin(), test_hashes.end());
-  size_t count = 0;
-  while (dup != test_hashes.end())
-  {
-    count++;
-    dup = std::adjacent_find(dup + 1, test_hashes.end());
-  }
-  printf("number of duplicates hashes %zu\n", count);
-  printf("ratio of duplicates  hashes %f\n", count / double(test_hashes.size()));
-
   size_t size = test_hashes.size();
 
-  printf("\n");
-  printf("Test size(added to filter): %d \n", TEST_SIZE);
-  printf("Query size(not added to filter): %d \n", QUERY_SIZE);
-  printf("Bogus size(randomly generated strings): %d \n", BOGUS_SIZE);
-  printf("\n");
-
-  printf("-------------- Xor - 8 Filter --------------\n");
-  /*******************************
-   * Let us benchmark the filter!
-   ******************************/
-  /**
-   * A filter is a simple data structure that can be easily serialized (e.g., to disk).
-   * https://github.com/FastFilter/xor_singleheader#persistent-usage
-   */
-  xor8_t filter_8;
-  // // Memory allocation (trivial):
-  bool is_ok = xor8_allocate(size, &filter_8);
-  if (!is_ok)
-  {
-    printf("You probably ran out of memory. Try a smaller size.\n");
-    return EXIT_FAILURE;
-  }
-
-  // Construction
-  is_ok = xor8_populate(test_hashes.data(), size, &filter_8);
-  if (!is_ok)
-  {
-    // This cannot happen unless there is a bug in the library or you provided a bad input (e.g., all duplicates).
-    printf("Construction failed. This should not happen.\n");
-    return EXIT_FAILURE;
-  }
-
-  // Let us check the size of the filter in bytes:
-  size_t filter_volume = xor8_size_in_bytes(&filter_8);
-  printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
-         100.0 * filter_volume / bytes);
-  printf("\nfilter memory usage : %1.f bits/entry\n",
-         8.0 * filter_volume / test_hashes.size());
-  printf("\n");
-
-  // Let us test the query with bogus strings
   std::vector<std::string> query_set_bogus;
-  size_t bogus_volume = 0;
-  for (size_t i = 0; i < BOGUS_SIZE; i++)
+
+  for (size_t i = 0; i < bogus_size; i++)
   {
     query_set_bogus.push_back(random_string());
   }
 
-  size_t fpp = 0;
-  for (int i = 0; i < BOGUS_SIZE; i++)
+  for (int i = 0; i < bogus_size; i++)
   {
-    bogus_volume += query_set_bogus[i].size();
     bogus_hashes[i] = simple_hash(query_set_bogus[i]);
-    bool in_set = xor8_contain(bogus_hashes[i], &filter_8);
-    if (in_set)
-    {
-      fpp++;
-    }
   }
 
-  printf("Bogus false-positives: %zu\n", fpp);
-  printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+  // printf("-------------- Xor - 8 Filter --------------\n");
+  // xor8_t filter_8;
+  // // // Memory allocation (trivial):
+  // is_ok = xor8_allocate(test_size, &filter_8);
+  // if (!is_ok)
+  // {
+  //   printf("You probably ran out of memory. Try a smaller size.\n");
+  //   return EXIT_FAILURE;
+  // }
 
-  // volatile size_t basic_count = 0;
-  // printf("Benchmarking queries:\n");
+  // // Construction
+  // is_ok = xor8_populate(test_hashes.data(), test_hashes.size(), &filter_8);
+  // if (!is_ok)
+  // {
+  //   // This cannot happen unless there is a bug in the library or you provided a bad input (e.g., all duplicates).
+  //   printf("Construction failed. This should not happen.\n");
+  //   return EXIT_FAILURE;
+  // }
 
-  // pretty_print(query_set_bogus.size(), bogus_volume, "binary_fuse16_contain",
-  //              bench([&query_set_bogus, &filter, &basic_count]() {
-  //                for (std::string &ref : query_set_bogus) {
-  //                  basic_count +=
-  //                      binary_fuse16_contain(simple_hash(ref), &filter);
-  //                }
-  //              }));
-  // printf("Benchmarking construction speed\n");
+  // // Let us check the size of the filter in bytes:
+  // filter_volume = xor8_size_in_bytes(&filter_8);
+  // // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
+  // //        100.0 * filter_volume / bytes);
+  // // printf("\nfilter memory usage : %1.f bits/entry\n",
+  // //        8.0 * filter_volume / test_hashes.size());
+  // // printf("\n");
 
-  // pretty_print(inputs.size(), bytes, "binary_fuse16_populate",
-  //              bench([&test_hashes, &filter, &size]() {
-  //                binary_fuse16_populate(test_hashes.data(), size, &filter);
-  //              }));
+  // // Let us test the query with bogus strings
 
-  // Testing
-  for (int i = 0; i < DATA_SIZE; i++)
-  {
-    dataValidity[i].second = xor8_contain(hashes[i], &filter_8);
-  }
+  // fp_bogus = 0;
+  // for (int i = 0; i < bogus_size; i++)
+  // {
+  //   bool in_set = xor8_contain(bogus_hashes[i], &filter_8);
+  //   if (in_set)
+  //   {
+  //     fp_bogus++;
+  //   }
+  // }
 
-  size_t falsePositive = 0;
-  size_t falseNegative = 0;
-  size_t truePositive = 0;
-  size_t trueNegative = 0;
+  // // printf("Bogus false-positives: %zu\n", fpp);
+  // // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
 
-  for (int i = 0; i < DATA_SIZE; i++)
-  {
-    if (dataValidity[i].first == true && dataValidity[i].second == true)
-    {
-      truePositive++;
-    }
-    else if (dataValidity[i].first == true && dataValidity[i].second == false)
-    {
-      falseNegative++;
-    }
-    else if (dataValidity[i].first == false && dataValidity[i].second == true)
-    {
-      falsePositive++;
-    }
-    else if (dataValidity[i].first == false && dataValidity[i].second == false)
-    {
-      trueNegative++;
-    }
-  }
+  // writeStat2(stat2);
 
-  printf("\n");
-  printf("Tested with total data set (test + query): %d \n", DATA_SIZE);
-  printf("True Positive: %zu", truePositive);
-  printf("\t");
-  printf("True Negative: %zu", trueNegative);
-  printf("\n");
-  printf("False Positive: %zu", falsePositive);
-  printf("\t");
-  printf("False Negative: %zu", falseNegative);
-  printf("\n");
-  printf("\n");
+  // // Benchmarking queries:
+  // pretty_print(inputs.size(), bytes,
+  //              bench([&hashes, &filter_8, &dataValidity]()
+  //                    {
+  //                for (int i = 0; i < data_size; i++)
+  //                {
+  //                  dataValidity[i].second = xor8_contain(hashes[i], &filter_8);
+  //                } }),
+  //              stat2);
 
-  writeOutput("Xor 8", truePositive, trueNegative, falsePositive, falseNegative, outputFile, fpp);
+  // // Benchmarking construction speed
+  // pretty_print(test_hashes.size(), bytes,
+  //              bench([&test_hashes, &filter_8, &size]()
+  //                    { xor8_populate(test_hashes.data(), size, &filter_8); }),
+  //              stat2);
 
-  printf("-------------- Xor - 16 Filter --------------\n");
+  // fprintf(stat2, "\n");
+
+  // writeStat1(volume, bytes, filter_volume, stat1);
+
+  // // Testing
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   dataValidity[i].second = xor8_contain(hashes[i], &filter_8);
+  // }
+
+  // falsePositive = 0;
+  // falseNegative = 0;
+  // truePositive = 0;
+  // trueNegative = 0;
+
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   if (dataValidity[i].first == true && dataValidity[i].second == true)
+  //   {
+  //     truePositive++;
+  //   }
+  //   else if (dataValidity[i].first == true && dataValidity[i].second == false)
+  //   {
+  //     falseNegative++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == true)
+  //   {
+  //     falsePositive++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == false)
+  //   {
+  //     trueNegative++;
+  //   }
+  // }
+
+  // // printf("\n");
+  // // printf("Tested with total data set (test + query): %d \n", data_size);
+  // // printf("True Positive: %zu\n", truePositive);
+  // // printf("True Negative: %zu\n", trueNegative);
+  // // printf("False Positive: %zu\n", falsePositive);
+  // // printf("False Negative: %zu\n", falseNegative);
+
+  // writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
+
+  // xor8_free(&filter_8);
+
+  // printf("-------------- Xor - 16 Filter --------------\n");
   xor16_t filter_16;
-  // Memory allocation (trivial):
-  is_ok = xor16_allocate(size, &filter_16);
+
+  // // Memory allocation (trivial):
+  is_ok = xor16_allocate(test_size, &filter_16);
   if (!is_ok)
   {
     printf("You probably ran out of memory. Try a smaller size.\n");
@@ -280,7 +292,7 @@ int main(int argc, char **argv)
   }
 
   // Construction
-  is_ok = xor16_populate(test_hashes.data(), size, &filter_16);
+  is_ok = xor16_populate(test_hashes.data(), test_hashes.size(), &filter_16);
   if (!is_ok)
   {
     // This cannot happen unless there is a bug in the library or you provided a bad input (e.g., all duplicates).
@@ -290,28 +302,51 @@ int main(int argc, char **argv)
 
   // Let us check the size of the filter in bytes:
   filter_volume = xor16_size_in_bytes(&filter_16);
-  printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
-         100.0 * filter_volume / bytes);
-  printf("\nfilter memory usage : %1.f bits/entry\n",
-         8.0 * filter_volume / test_hashes.size());
-  printf("\n");
+  // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
+  //        100.0 * filter_volume / bytes);
+  // printf("\nfilter memory usage : %1.f bits/entry\n",
+  //        8.0 * filter_volume / test_hashes.size());
+  // printf("\n");
+
   // Let us test the query with bogus strings
 
-  fpp = 0;
-  for (auto &ref : bogus_hashes)
+  fp_bogus = 0;
+  for (int i = 0; i < bogus_size; i++)
   {
-    bool in_set = xor16_contain(ref, &filter_16);
+    bool in_set = xor16_contain(bogus_hashes[i], &filter_16);
     if (in_set)
     {
-      fpp++;
+      fp_bogus++;
     }
   }
 
-  printf("Bogus false-positives: %zu\n", fpp);
-  printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+  // printf("Bogus false-positives: %zu\n", fpp);
+  // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+
+  writeStat2(stat2);
+
+  // Benchmarking queries:
+  pretty_print(inputs.size(), bytes,
+               bench([&hashes, &filter_16, &dataValidity]()
+                     {
+                 for (int i = 0; i < data_size; i++)
+                 {
+                   dataValidity[i].second = xor16_contain(hashes[i], &filter_16);
+                 } }),
+               stat2);
+
+  // Benchmarking construction speed
+  pretty_print(test_hashes.size(), bytes,
+               bench([&test_hashes, &filter_16, &size]()
+                     { xor16_populate(test_hashes.data(), size, &filter_16); }),
+               stat2);
+
+  fprintf(stat2, "\n");
+
+  writeStat1(volume, bytes, filter_volume, stat1);
 
   // Testing
-  for (int i = 0; i < DATA_SIZE; i++)
+  for (int i = 0; i < data_size; i++)
   {
     dataValidity[i].second = xor16_contain(hashes[i], &filter_16);
   }
@@ -321,7 +356,7 @@ int main(int argc, char **argv)
   truePositive = 0;
   trueNegative = 0;
 
-  for (int i = 0; i < DATA_SIZE; i++)
+  for (int i = 0; i < data_size; i++)
   {
     if (dataValidity[i].first == true && dataValidity[i].second == true)
     {
@@ -341,20 +376,18 @@ int main(int argc, char **argv)
     }
   }
 
-  printf("\n");
-  printf("Tested with total data set (test + query): %d \n", DATA_SIZE);
-  printf("True Positive: %zu", truePositive);
-  printf("\t");
-  printf("True Negative: %zu", trueNegative);
-  printf("\n");
-  printf("False Positive: %zu", falsePositive);
-  printf("\t");
-  printf("False Negative: %zu", falseNegative);
-  printf("\n");
-  printf("\n");
+  // printf("\n");
+  // printf("Tested with total data set (test + query): %d \n", data_size);
+  // printf("True Positive: %zu\n", truePositive);
+  // printf("True Negative: %zu\n", trueNegative);
+  // printf("False Positive: %zu\n", falsePositive);
+  // printf("False Negative: %zu\n", falseNegative);
 
-  writeOutput("Xor 16", truePositive, trueNegative, falsePositive, falseNegative, outputFile, fpp);
+  writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
 
-  fclose(outputFile);
+  xor16_free(&filter_16);
+  fclose(data_reliability);
+  fclose(stat1);
+  fclose(stat2);
   return EXIT_SUCCESS;
 }

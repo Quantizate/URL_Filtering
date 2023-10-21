@@ -71,13 +71,14 @@ function show_progress {
 
 # percent(){ local p=00$(($1*100000/$2));printf -v "$3" %.2f ${p::-3}.${p: -3};}
 
+show_progress $COUNT $FINAL
 while [ $COUNT -lt $FINAL ]; do
     let COUNT=COUNT+STEP
-    show_progress $COUNT $FINAL
 
     # percent $COUNT $FINAL percent
     # percentBar $percent $((cols-8)) prctbar
     # printf '\r\e[44;38;5;25m%s\e[0m%6.2f%%' "$prctbar" $percent;
 
     ./"$INFILE" "$DATAFILE" "$COUNT" "$OUTFILE1" "$OUTFILE2" "$OUTFILE3"
+    show_progress $COUNT $FINAL
 done
