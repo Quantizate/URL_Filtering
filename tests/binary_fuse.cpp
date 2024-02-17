@@ -7,10 +7,11 @@
 #include <vector>
 #include <string>
 
-extern "C"
-{
-#include "./binary_fuse/binaryfusefilter.h"
-}
+// extern "C"
+// {
+// #include "./binary_fuse/binaryfusefilter.h"
+#include "./binary_fuse/binary_fuse_ext.h"
+// }
 
 // #define DATA_SIZE 1000000
 // #define TEST_SIZE 500000
@@ -343,16 +344,109 @@ int main(int argc, char **argv)
   // printf("\n");
 
   // printf("-------------- Binary Fuse - 8 Filter --------------\n");
-  binary_fuse8_t filter2;
+  // binary_fuse8_t filter2;
+  // // Memory allocation (trivial):
+  // is_ok = binary_fuse8_allocate(size, &filter2);
+  // if (!is_ok)
+  // {
+  //   printf("You probably ran out of memory. Try a smaller size.\n");
+  //   return EXIT_FAILURE;
+  // }
+  // // Construction:
+  // is_ok = binary_fuse8_populate(test_hashes.data(), size, &filter2);
+  // if (!is_ok)
+  // {
+  //   // This cannot happen unless there is a bug in the library or you provided a bad input (e.g., all duplicates).
+  //   printf("Construction failed. This should not happen.\n");
+  //   return EXIT_FAILURE;
+  // }
+  // // Let us check the size of the filter in bytes:
+  // filter_volume = binary_fuse8_size_in_bytes(&filter2);
+
+  // // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
+  // //        100.0 * filter_volume / bytes);
+  // // printf("\nfilter memory usage : %1.f bits/entry\n",
+  // //        8.0 * filter_volume / test_hashes.size());
+  // // printf("\n");
+  // // Let us test the query with bogus strings
+
+  // fp_bogus = 0;
+  // for (auto &ref : bogus_hashes)
+  // {
+  //   bool in_set = binary_fuse8_contain(ref, &filter2);
+  //   if (in_set)
+  //   {
+  //     fp_bogus++;
+  //   }
+  // }
+
+  // // printf("Bogus false-positives: %zu\n", fp_bogus);
+  // // printf("Bogus false-positive rate %f\n", fp_bogus / double(query_set_bogus.size()));
+
+  // writeStat2(stat2);
+
+  // // Benchmarking queries:
+  // pretty_print(inputs.size(), bytes,
+  //              bench([&hashes, &filter2, &dataValidity]()
+  //                    {
+  //                for (int i = 0; i < data_size; i++)
+  //                {
+  //                  dataValidity[i].second = binary_fuse8_contain(hashes[i], &filter2);
+  //                } }),
+  //              stat2);
+
+  // // Benchmarking construction speed
+  // pretty_print(test_hashes.size(), bytes,
+  //              bench([&test_hashes, &filter2, &size]()
+  //                    { binary_fuse8_populate(test_hashes.data(), size, &filter2); }),
+  //              stat2);
+
+  // fprintf(stat2, "\n");
+
+  // writeStat1(volume, bytes, filter_volume, stat1);
+
+  // // Testing
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   dataValidity[i].second = binary_fuse8_contain(hashes[i], &filter2);
+  // }
+
+  // falsePositive = 0;
+  // falseNegative = 0;
+  // truePositive = 0;
+  // trueNegative = 0;
+
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   if (dataValidity[i].first == true && dataValidity[i].second == true)
+  //   {
+  //     truePositive++;
+  //   }
+  //   else if (dataValidity[i].first == true && dataValidity[i].second == false)
+  //   {
+  //     falseNegative++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == true)
+  //   {
+  //     falsePositive++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == false)
+  //   {
+  //     trueNegative++;
+  //   }
+  // }
+
+  // printf("-------------- Binary Fuse - 32 Filter --------------\n");
+  binary_fuse32_t filter2;
   // Memory allocation (trivial):
-  is_ok = binary_fuse8_allocate(size, &filter2);
+  is_ok = binary_fuse32_allocate(size, &filter2);
   if (!is_ok)
   {
     printf("You probably ran out of memory. Try a smaller size.\n");
     return EXIT_FAILURE;
   }
   // Construction:
-  is_ok = binary_fuse8_populate(test_hashes.data(), size, &filter2);
+  is_ok = binary_fuse32_populate(test_hashes.data(), size, &filter2);
   if (!is_ok)
   {
     // This cannot happen unless there is a bug in the library or you provided a bad input (e.g., all duplicates).
@@ -360,7 +454,7 @@ int main(int argc, char **argv)
     return EXIT_FAILURE;
   }
   // Let us check the size of the filter in bytes:
-  filter_volume = binary_fuse8_size_in_bytes(&filter2);
+  filter_volume = binary_fuse32_size_in_bytes(&filter2);
 
   // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
   //        100.0 * filter_volume / bytes);
@@ -372,7 +466,7 @@ int main(int argc, char **argv)
   fp_bogus = 0;
   for (auto &ref : bogus_hashes)
   {
-    bool in_set = binary_fuse8_contain(ref, &filter2);
+    bool in_set = binary_fuse32_contain(ref, &filter2);
     if (in_set)
     {
       fp_bogus++;
@@ -390,14 +484,14 @@ int main(int argc, char **argv)
                      {
                  for (int i = 0; i < data_size; i++)
                  {
-                   dataValidity[i].second = binary_fuse8_contain(hashes[i], &filter2);
+                   dataValidity[i].second = binary_fuse32_contain(hashes[i], &filter2);
                  } }),
                stat2);
 
   // Benchmarking construction speed
   pretty_print(test_hashes.size(), bytes,
                bench([&test_hashes, &filter2, &size]()
-                     { binary_fuse8_populate(test_hashes.data(), size, &filter2); }),
+                     { binary_fuse32_populate(test_hashes.data(), size, &filter2); }),
                stat2);
 
   fprintf(stat2, "\n");
@@ -407,7 +501,7 @@ int main(int argc, char **argv)
   // Testing
   for (int i = 0; i < data_size; i++)
   {
-    dataValidity[i].second = binary_fuse8_contain(hashes[i], &filter2);
+    dataValidity[i].second = binary_fuse32_contain(hashes[i], &filter2);
   }
 
   falsePositive = 0;
@@ -444,7 +538,7 @@ int main(int argc, char **argv)
 
   writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
 
-  binary_fuse8_free(&filter2);
+  binary_fuse32_free(&filter2);
   fclose(data_reliability);
   fclose(stat1);
   fclose(stat2);

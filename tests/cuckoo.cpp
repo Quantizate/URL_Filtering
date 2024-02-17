@@ -466,18 +466,16 @@ int main(int argc, char **argv)
 
   // writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
 
-  // printf("-------------- Cuckoo Fuse - 16 Filter --------------\n");
-  CuckooFuseFilter<uint64_t, uint16_t> fuse_16(data_size), fuse16_test(data_size);
+  CuckooFilterStable<uint64_t, 24> fuse_24(data_size), fuse_24_test(data_size);
 
-  printf("here");
   // Construction
   for (int i = 0; i < test_size; i++)
   {
-    fuse_16.Add(test_hashes[i]);
+    fuse_24.Add(test_hashes[i]);
   }
 
   // Let us check the size of the filter in bytes:
-  filter_volume = fuse_16.SizeInBytes();
+  filter_volume = fuse_24.SizeInBytes();
   // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
   //        100.0 * filter_volume / bytes);
   // printf("\nfilter memory usage : %1.f bits/entry\n",
@@ -488,7 +486,7 @@ int main(int argc, char **argv)
   fp_bogus = 0;
   for (int i = 0; i < bogus_size; i++)
   {
-    bool in_set = 1 - fuse_16.Contain(bogus_hashes[i]);
+    bool in_set = 1 - fuse_24.Contain(bogus_hashes[i]);
     if (in_set)
     {
       fp_bogus++;
@@ -504,20 +502,20 @@ int main(int argc, char **argv)
   // printf("Benchmarking queries:\n");
 
   pretty_print(inputs.size(), bytes,
-               bench([&hashes, &fuse_16, &dataValidity]()
+               bench([&hashes, &fuse_24, &dataValidity]()
                      {
                  for (int i = 0; i < data_size; i++)
                  {
-                   dataValidity[i].second = fuse_16.Contain(hashes[i]);
+                   dataValidity[i].second = fuse_24.Contain(hashes[i]);
                  } }),
                stat2);
 
   // printf("Benchmarking construction speed\n");
   pretty_print(test_hashes.size(), bytes,
-               bench([&test_hashes, &fuse16_test, &basic_num]()
+               bench([&test_hashes, &fuse_24_test, &basic_num]()
                      {
                      for(basic_num = 0; basic_num < test_hashes.size(); basic_num++){
-                        fuse16_test.Add(test_hashes[basic_num]);
+                        fuse_24_test.Add(test_hashes[basic_num]);
                         } }),
                stat2);
 
@@ -528,7 +526,7 @@ int main(int argc, char **argv)
   // Testing
   for (int i = 0; i < data_size; i++)
   {
-    dataValidity[i].second = 1 - fuse_16.Contain(hashes[i]);
+    dataValidity[i].second = 1 - fuse_24.Contain(hashes[i]);
   }
 
   falsePositive = 0;
@@ -558,7 +556,7 @@ int main(int argc, char **argv)
 
   // printf("\n");
   // printf("Tested with total data set (test + query): %d \n", data_size);
-  // printf("True Positive: %zu", truePositive);
+  // printf("True Positive: %zu", truePositive);`
   // printf("\t");
   // printf("True Negative: %zu", trueNegative);
   // printf("\n");

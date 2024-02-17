@@ -735,115 +735,201 @@ int main(int argc, char **argv)
   // writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
 
   // printf("-------------- Succinct Counting Blocked Bloom 10 Filter --------------\n");
-  SuccinctCountingBloomFilter<uint64_t, 16, true> sCntBlBloom(filter_size), sCntBlBloom_test(filter_size);
+  // SuccinctCountingBloomFilter<uint64_t, 16, true> sCntBlBloom(filter_size), sCntBlBloom_test(filter_size);
 
-  // Construction
-  sCntBlBloom.AddAll(test_hashes, 0, test_size);
+  // // Construction
+  // sCntBlBloom.AddAll(test_hashes, 0, test_size);
 
-  // Let us check the size of the filter in bytes:
-  filter_volume = sCntBlBloom.SizeInBytes();
-  // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
-  //        100.0 * filter_volume / bytes);
-  // printf("\nfilter memory usage : %1.f bits/entry\n",
-  //        8.0 * filter_volume / test_hashes.size());
-  // printf("\n");
+  // // Let us check the size of the filter in bytes:
+  // filter_volume = sCntBlBloom.SizeInBytes();
+  // // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
+  // //        100.0 * filter_volume / bytes);
+  // // printf("\nfilter memory usage : %1.f bits/entry\n",
+  // //        8.0 * filter_volume / test_hashes.size());
+  // // printf("\n");
 
-  // Let us test the query with bogus strings
-  fp_bogus = 0;
-  for (int i = 0; i < bogus_size; i++)
-  {
-    bool in_set = 1 - sCntBlBloom.Contain(bogus_hashes[i]);
-    if (in_set)
-    {
-      fp_bogus++;
-    }
-  }
+  // // Let us test the query with bogus strings
+  // fp_bogus = 0;
+  // for (int i = 0; i < bogus_size; i++)
+  // {
+  //   bool in_set = 1 - sCntBlBloom.Contain(bogus_hashes[i]);
+  //   if (in_set)
+  //   {
+  //     fp_bogus++;
+  //   }
+  // }
 
-  // printf("Bogus false-positives: %zu\n", fpp);
-  // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+  // // printf("Bogus false-positives: %zu\n", fpp);
+  // // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
 
-  // printf("Benchmarking queries:\n");
+  // // printf("Benchmarking queries:\n");
 
-  basic_count = 0;
-  writeStat2(stat2);
+  // basic_count = 0;
+  // writeStat2(stat2);
 
-  pretty_print(inputs.size(), bytes,
-               bench([&hashes, &sCntBlBloom, &basic_count]()
-                     {
-                 for (int i = 0;i < data_size;i++) {
-                   basic_count +=
-                       sCntBlBloom.Contain(hashes[i]);
-                 } }),
-               stat2);
+  // pretty_print(inputs.size(), bytes,
+  //              bench([&hashes, &sCntBlBloom, &basic_count]()
+  //                    {
+  //                for (int i = 0;i < data_size;i++) {
+  //                  basic_count +=
+  //                      sCntBlBloom.Contain(hashes[i]);
+  //                } }),
+  //              stat2);
 
-  // printf("Benchmarking construction speed\n");
-  basic_count = 0;
-  pretty_print(test_hashes.size(), bytes,
-               bench([&test_hashes, &sCntBlBloom_test, &basic_count]()
-                     {
-               for(basic_count = 0; basic_count < test_size; basic_count++) {
-                  sCntBlBloom_test.Add(test_hashes[basic_count]);
-                } }),
-               stat2);
+  // // printf("Benchmarking construction speed\n");
+  // basic_count = 0;
+  // pretty_print(test_hashes.size(), bytes,
+  //              bench([&test_hashes, &sCntBlBloom_test, &basic_count]()
+  //                    {
+  //              for(basic_count = 0; basic_count < test_size; basic_count++) {
+  //                 sCntBlBloom_test.Add(test_hashes[basic_count]);
+  //               } }),
+  //              stat2);
 
-  fprintf(stat2, "\n");
+  // fprintf(stat2, "\n");
 
-  writeStat1(input_volume, bytes, filter_volume, stat1);
+  // writeStat1(input_volume, bytes, filter_volume, stat1);
 
-  // Testing
-  for (int i = 0; i < data_size; i++)
-  {
-    dataValidity[i].second = 1 - sCntBlBloom.Contain(hashes[i]);
-  }
+  // // Testing
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   dataValidity[i].second = 1 - sCntBlBloom.Contain(hashes[i]);
+  // }
 
-  falsePositive = 0;
-  falseNegative = 0;
-  truePositive = 0;
-  trueNegative = 0;
+  // falsePositive = 0;
+  // falseNegative = 0;
+  // truePositive = 0;
+  // trueNegative = 0;
 
-  for (int i = 0; i < data_size; i++)
-  {
-    if (dataValidity[i].first == true && dataValidity[i].second == true)
-    {
-      truePositive++;
-    }
-    else if (dataValidity[i].first == true && dataValidity[i].second == false)
-    {
-      falseNegative++;
-    }
-    else if (dataValidity[i].first == false && dataValidity[i].second == true)
-    {
-      falsePositive++;
-    }
-    else if (dataValidity[i].first == false && dataValidity[i].second == false)
-    {
-      trueNegative++;
-    }
-  }
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   if (dataValidity[i].first == true && dataValidity[i].second == true)
+  //   {
+  //     truePositive++;
+  //   }
+  //   else if (dataValidity[i].first == true && dataValidity[i].second == false)
+  //   {
+  //     falseNegative++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == true)
+  //   {
+  //     falsePositive++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == false)
+  //   {
+  //     trueNegative++;
+  //   }
+  // }
 
-  // printf("\n");
-  // printf("Tested with total data set (test + query): %d \n", data_size);
-  // printf("True Positive: %zu", truePositive);
-  // printf("\t");
-  // printf("True Negative: %zu", trueNegative);
-  // printf("\n");
-  // printf("False Positive: %zu", falsePositive);
-  // printf("\t");
-  // printf("False Negative: %zu", falseNegative);
-  // printf("\n");
-  // printf("\n");
+  // // printf("\n");
+  // // printf("Tested with total data set (test + query): %d \n", data_size);
+  // // printf("True Positive: %zu", truePositive);
+  // // printf("\t");
+  // // printf("True Negative: %zu", trueNegative);
+  // // printf("\n");
+  // // printf("False Positive: %zu", falsePositive);
+  // // printf("\t");
+  // // printf("False Negative: %zu", falseNegative);
+  // // printf("\n");
+  // // printf("\n");
 
-  writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
+  // writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
 
   // printf("-------------- Succinct Counting Blocked Bloom Rank 10 Filter --------------\n");
   // SuccinctCountingBlockedBloomRankFilter<uint64_t, 10, SimpleMixSplit> scbrBloom(filter_size);
-  BloomFilter<uint64_t, 8, true> bBloom_8(filter_size), bBloom_8_test(filter_size);
+  // BloomFilter<uint64_t, 8, true> bBloom_8(filter_size), bBloom_8_test(filter_size);
+
+  // // Construction
+  // bBloom_8.AddAll(test_hashes, 0, test_size);
+
+  // // Let us check the size of the filter in bytes:
+  // filter_volume = bBloom_8.SizeInBytes();
+  // // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
+  // //        100.0 * filter_volume / bytes);
+  // // printf("\nfilter memory usage : %1.f bits/entry\n",
+  // //        8.0 * filter_volume / test_hashes.size());
+  // // printf("\n");
+
+  // // Let us test the query with bogus strings
+  // fp_bogus = 0;
+  // for (int i = 0; i < bogus_size; i++)
+  // {
+  //   bool in_set = 1 - bBloom_8.Contain(bogus_hashes[i]);
+  //   if (in_set)
+  //   {
+  //     fp_bogus++;
+  //   }
+  // }
+
+  // // printf("Bogus false-positives: %zu\n", fpp);
+  // // printf("Bogus false-positive rate %f\n", fpp / double(query_set_bogus.size()));
+
+  // // printf("Benchmarking queries:\n");
+
+  // basic_count = 0;
+  // writeStat2(stat2);
+
+  // pretty_print(inputs.size(), bytes,
+  //              bench([&hashes, &bBloom_8, &basic_count]()
+  //                    {
+  //                for (int i = 0;i < data_size;i++) {
+  //                  basic_count +=
+  //                      bBloom_8.Contain(hashes[i]);
+  //                } }),
+  //              stat2);
+
+  // // printf("Benchmarking construction speed\n");
+
+  // pretty_print(test_hashes.size(), bytes,
+  //              bench([&test_hashes, &bBloom_8_test, &size]()
+  //                    { bBloom_8_test.AddAll(test_hashes, 0, size); }),
+  //              stat2);
+
+  // fprintf(stat2, "\n");
+
+  // writeStat1(input_volume, bytes, filter_volume, stat1);
+
+  // // Testing
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   dataValidity[i].second = 1 - bBloom_8.Contain(hashes[i]);
+  // }
+
+  // falsePositive = 0;
+  // falseNegative = 0;
+  // truePositive = 0;
+  // trueNegative = 0;
+
+  // for (int i = 0; i < data_size; i++)
+  // {
+  //   if (dataValidity[i].first == true && dataValidity[i].second == true)
+  //   {
+  //     truePositive++;
+  //   }
+  //   else if (dataValidity[i].first == true && dataValidity[i].second == false)
+  //   {
+  //     falseNegative++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == true)
+  //   {
+  //     falsePositive++;
+  //   }
+  //   else if (dataValidity[i].first == false && dataValidity[i].second == false)
+  //   {
+  //     trueNegative++;
+  //   }
+  // }
+
+  // writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
+
+  // Branchless_Bloom
+  BloomFilter<uint64_t, 24, true> bBloom_24(filter_size), bBloom_24_test(filter_size);
 
   // Construction
-  bBloom_8.AddAll(test_hashes, 0, test_size);
+  bBloom_24.AddAll(test_hashes, 0, test_size);
 
   // Let us check the size of the filter in bytes:
-  filter_volume = bBloom_8.SizeInBytes();
+  filter_volume = bBloom_24.SizeInBytes();
   // printf("\nfilter memory usage : %zu bytes (%.1f %% of input)\n", filter_volume,
   //        100.0 * filter_volume / bytes);
   // printf("\nfilter memory usage : %1.f bits/entry\n",
@@ -854,7 +940,7 @@ int main(int argc, char **argv)
   fp_bogus = 0;
   for (int i = 0; i < bogus_size; i++)
   {
-    bool in_set = 1 - bBloom_8.Contain(bogus_hashes[i]);
+    bool in_set = 1 - bBloom_24.Contain(bogus_hashes[i]);
     if (in_set)
     {
       fp_bogus++;
@@ -870,19 +956,19 @@ int main(int argc, char **argv)
   writeStat2(stat2);
 
   pretty_print(inputs.size(), bytes,
-               bench([&hashes, &bBloom_8, &basic_count]()
+               bench([&hashes, &bBloom_24, &basic_count]()
                      {
                  for (int i = 0;i < data_size;i++) {
                    basic_count +=
-                       bBloom_8.Contain(hashes[i]);
+                       bBloom_24.Contain(hashes[i]);
                  } }),
                stat2);
 
   // printf("Benchmarking construction speed\n");
 
   pretty_print(test_hashes.size(), bytes,
-               bench([&test_hashes, &bBloom_8_test, &size]()
-                     { bBloom_8_test.AddAll(test_hashes, 0, size); }),
+               bench([&test_hashes, &bBloom_24_test, &size]()
+                     { bBloom_24_test.AddAll(test_hashes, 0, size); }),
                stat2);
 
   fprintf(stat2, "\n");
@@ -892,7 +978,7 @@ int main(int argc, char **argv)
   // Testing
   for (int i = 0; i < data_size; i++)
   {
-    dataValidity[i].second = 1 - bBloom_8.Contain(hashes[i]);
+    dataValidity[i].second = 1 - bBloom_24.Contain(hashes[i]);
   }
 
   falsePositive = 0;
@@ -919,18 +1005,6 @@ int main(int argc, char **argv)
       trueNegative++;
     }
   }
-
-  // printf("\n");
-  // printf("Tested with total data set (test + query): %d \n", data_size);
-  // printf("True Positive: %zu", truePositive);
-  // printf("\t");
-  // printf("True Negative: %zu", trueNegative);
-  // printf("\n");
-  // printf("False Positive: %zu", falsePositive);
-  // printf("\t");
-  // printf("False Negative: %zu", falseNegative);
-  // printf("\n");
-  // printf("\n");
 
   writeOutput(truePositive, trueNegative, falsePositive, falseNegative, fp_bogus, dup_num, data_reliability);
 
